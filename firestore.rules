@@ -1,0 +1,119 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function signed() { return request.auth != null; }
+    function me() { return request.auth.uid; }
+    function P(u) { return get(/databases/$(db)/documents/profiles/$(u)).data; }
+    function rk(r) { return r == 'ceo' ? 2 : (r == 'admin' ? 1 : 0); }
+    function active() { return signed() && exists(/databases/$(db)/documents/profiles/$(me())) && !P(me()).banned; }
+    function staff() { return active() && rk(P(me()).role) >= 1; }
+    function ceo() { return active() && P(me()).role == 'ceo'; }
+    function ceoMail() { return signed() && request.auth.token.email == 'qr91388@gmail.com' && request.auth.token.email_verified == true; }
+    function only(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+
+    match /profiles/{u} {
+      allow read: if signed();
+      allow create: if me() == u && request.resource.data.id == u && request.resource.data.banned == false
+        && getAfter(/databases/$(db)/documents/usernames/$(request.resource.data.username)).data.uid == u
+        && (request.resource.data.role == 'user' || (request.resource.data.role == 'ceo' && ceoMail()));
+      allow update: if
+        (me() == u && active() && only(['dname','bio','link','avatar','cover','livebg','biz','pub','username'])
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['username'])
+              || getAfter(/databases/$(db)/documents/usernames/$(request.resource.data.username)).data.uid == u))
+        || (staff() && u != me() && only(['banned']) && rk(P(me()).role) > rk(resource.data.role))
+        || (ceoMail() && me() == u && only(['role']) && request.resource.data.role == 'ceo')
+        || (ceoMail() && u != me() && only(['role']) && request.resource.data.role in ['user','admin'])
+        || (ceo() && u != me() && only(['role']) && resource.data.role != 'ceo' && request.resource.data.role in ['user','admin']);
+      allow delete: if me() == u && resource.data.role != 'ceo';
+    }
+    match /usernames/{n} {
+      allow read: if signed();
+      allow create: if signed() && !exists(/databases/$(db)/documents/usernames/$(n)) && request.resource.data.uid == me() && n.matches('^[a-z0-9_.]{3,20}$');
+      allow delete: if signed() && resource.data.uid == me();
+    }
+    match /meta/{d} { allow read: if signed(); }
+    match /wallets/{u} {
+      allow read: if signed() && (me() == u || ceo());
+      allow create: if me() == u && request.resource.data.coins == 0 && request.resource.data.diamonds == 0;
+      allow delete: if me() == u;
+    }
+    match /user_data/{u} {
+      allow read: if signed() && me() == u;
+      allow create, update: if active() && me() == u;
+      allow delete: if me() == u;
+    }
+    match /posts/{p} {
+      allow read: if signed();
+      allow create: if active() && request.resource.data.user_id == me() && request.resource.data.views == 0;
+      allow update: if (active() && resource.data.user_id == me() && only(['caption','priv','pin']))
+        || (active() && only(['views']) && request.resource.data.views == resource.data.views + 1);
+      allow delete: if active() && (resource.data.user_id == me() || (staff() && rk(P(me()).role) > rk(P(resource.data.user_id).role)));
+    }
+    match /comments/{c} {
+      allow read: if signed();
+      allow create: if active() && request.resource.data.user_id == me();
+      allow delete: if active() && (resource.data.user_id == me() || staff()
+        || get(/databases/$(db)/documents/posts/$(resource.data.post_id)).data.user_id == me());
+    }
+    match /likes/{id} {
+      allow read: if signed();
+      allow create: if active() && request.resource.data.user_id == me() && id == request.resource.data.post_id + '_' + me();
+      allow delete: if signed() && resource.data.user_id == me();
+    }
+    match /follows/{id} {
+      allow read: if signed();
+      allow create: if active() && request.resource.data.follower_id == me() && request.resource.data.following_id != me();
+      allow delete: if signed() && (resource.data.follower_id == me() || resource.data.following_id == me());
+    }
+    match /requests/{id} {
+      allow read: if signed() && (resource.data.follower_id == me() || resource.data.following_id == me());
+      allow create: if active() && request.resource.data.follower_id == me();
+      allow delete: if signed() && (resource.data.follower_id == me() || resource.data.following_id == me());
+    }
+    match /blocks/{id} {
+      allow read: if signed() && (resource.data.blocker_id == me() || resource.data.blocked_id == me());
+      allow create, delete: if active() && (request.resource.data.blocker_id == me() || resource.data.blocker_id == me());
+    }
+    match /marks/{id} {
+      allow read: if signed() && (resource.data.user_id == me() || resource.data.kind == 'repost');
+      allow create: if active() && request.resource.data.user_id == me();
+      allow delete: if signed() && resource.data.user_id == me();
+    }
+    match /reports/{id} {
+      allow read: if signed() && (resource.data.user_id == me() || staff());
+      allow create: if active() && request.resource.data.user_id == me();
+      allow delete: if staff();
+    }
+    match /events/{id} {
+      allow read: if signed() && (resource.data.from_id == me() || resource.data.to_id == me());
+      allow create: if active() && request.resource.data.from_id == me();
+      allow delete: if signed() && (resource.data.from_id == me() || resource.data.to_id == me());
+    }
+    match /msgs/{id} {
+      allow read: if signed() && (resource.data.from_id == me() || resource.data.to_id == me());
+      allow create: if active() && request.resource.data.from_id == me();
+      allow update: if signed() && resource.data.to_id == me() && only(['read']);
+      allow delete: if signed() && (resource.data.from_id == me() || resource.data.to_id == me());
+    }
+    match /campaigns/{id} {
+      allow read: if signed();
+      allow create, update, delete: if staff();
+    }
+    match /gifts/{id} { allow read: if signed(); allow write: if ceo(); }
+    match /app_settings/{id} { allow read: if signed(); allow write: if ceo(); }
+    match /txs/{id} { allow read: if signed() && resource.data.user_id == me(); }
+    match /strikes/{u} { allow read: if signed() && (me() == u || staff()); }
+    match /appeals/{id} { allow read: if signed() && (resource.data.user_id == me() || staff()); }
+    match /topups/{id} { allow read: if signed() && (resource.data.user_id == me() || ceo()); }
+    match /withdrawals/{id} { allow read: if signed() && (resource.data.user_id == me() || ceo()); }
+    match /push_tokens/{u} {
+      allow create, update: if active() && me() == u;
+      allow delete: if signed() && me() == u;
+    }
+    match /post_views/{id} {
+      allow read: if signed() && resource.data.owner_id == me();
+      allow create: if active() && request.resource.data.owner_id != me()
+        && request.resource.data.owner_id == get(/databases/$(db)/documents/posts/$(request.resource.data.post_id)).data.user_id;
+    }
+  }
+}

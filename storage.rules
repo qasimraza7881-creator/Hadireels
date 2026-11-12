@@ -1,0 +1,29 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    /* videos: public to watch, only the owner can add */
+    match /{uid}/{file} {
+      allow read: if true;
+      allow create: if request.auth != null && request.auth.uid == uid
+        && request.resource.size < 50 * 1024 * 1024
+        && request.resource.contentType.matches('video/.*');
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+    /* video thumbnails: public to see, only the owner can add */
+    match /thumbs/{uid}/{file} {
+      allow read: if true;
+      allow create: if request.auth != null && request.auth.uid == uid
+        && request.resource.size < 400 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+    /* payment slips: private. Only the owner and the CEO can see them */
+    match /slips/{uid}/{file} {
+      allow create: if request.auth != null && request.auth.uid == uid
+        && request.resource.size < 3 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow read: if request.auth != null && (request.auth.uid == uid
+        || firestore.get(/databases/(default)/documents/profiles/$(request.auth.uid)).data.role == 'ceo');
+    }
+  }
+}

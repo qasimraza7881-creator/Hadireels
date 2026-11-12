@@ -1,0 +1,28 @@
+{
+  "rules": {
+    "live": {
+      "lobby": {
+        ".read": "auth != null",
+        "$host": { ".write": "auth != null && $host === auth.uid", ".validate": "newData.hasChildren(['room','title','from'])" }
+      },
+      "bus": {
+        "$room": {
+          ".read": "auth != null",
+          "$k": {
+            ".write": "auth != null && (!data.exists() || data.child('from/id').val() === auth.uid)",
+            ".validate": "newData.child('from/id').val() === auth.uid"
+          }
+        }
+      },
+      "inbox": {
+        "$u": {
+          ".read": "auth != null && $u === auth.uid",
+          "$k": {
+            ".write": "auth != null && (!data.exists() || data.child('from/id').val() === auth.uid || $u === auth.uid)",
+            ".validate": "newData.child('from/id').val() === auth.uid"
+          }
+        }
+      }
+    }
+  }
+}
